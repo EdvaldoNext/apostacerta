@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador de Apostas Lotofácil</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        label { display: block; margin: 10px 0 5px; }
+        input, select { width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background-color: #4CAF50; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; width: 100%; }
+        button:hover { background-color: #45a049; }
+        #result { margin-top: 20px; }
+        .aposta { background: #e9ffe9; padding: 10px; margin: 10px 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Gerador Inteligente de Apostas Lotofácil</h2>
+        <label for="topNumbers">10 Números Mais Sorteados (opcional, separados por vírgula):</label>
+        <input type="text" id="topNumbers" placeholder="Ex: 1,2,3,4,5,6,7,8,9,10">
+
+        <label for="qty">Quantidade de Apostas (1-10):</label>
+        <select id="qty">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
+        </select>
+
+        <button onclick="generateBets()">Gerar Apostas</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        function generateBets() {
+            const topInput = document.getElementById('topNumbers').value.trim();
+            let top10 = topInput ? topInput.split(',').map(n => parseInt(n.trim())).filter(n => n >= 1 && n <= 25) : [20, 10, 25, 11, 13, 24, 14, 4, 1, 12];
+            if (top10.length > 10) top10 = top10.slice(0, 10); // Limita a 10
+
+            const qty = parseInt(document.getElementById('qty').value);
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '';
+
+            for (let i = 0; i < qty; i++) {
+                const bet = generateSingleBet(top10);
+                if (bet) {
+                    const betDiv = document.createElement('div');
+                    betDiv.className = 'aposta';
+                    betDiv.innerText = `Aposta ${i+1}: ${bet.sort((a,b)=>a-b).join(', ')}`;
+                    resultDiv.appendChild(betDiv);
+                } else {
+                    resultDiv.innerHTML += `<p>Erro: Não conseguiu gerar aposta válida após 1000 tentativas. Tente novamente.</p>`;
+                }
+            }
+        }
+
+        function generateSingleBet(top10) {
+            const primos = [2, 3, 5, 7, 11, 13, 17, 19, 23];
+            const maxTries = 1000;
+
+            for (let tryCount = 0; tryCount < maxTries; tryCount++) {
+                // Gerar sequência com gaps 1-3 (caminhada aleatória)
+                let numbers = [];
+                let current = Math.floor(Math.random() * (25 - 14 * 1 + 1)) + 1; // Start max para min gaps
+                numbers.push(current);
+
+                for (let j = 1; j < 15; j++) {
+                    let gap = Math.floor(Math.random() * 3) + 1;
+                    current += gap;
+                    if (current > 25) break; // Inválido, pula para nova tentativa
+                    numbers.push(current);
+                }
+
+                if (numbers.length < 15 || new Set(numbers).size < 15) continue; // Garante 15 únicos
+
+                // Ajustar para priorizar top10: Substituir aleatoriamente alguns números por top10 próximos, se possível
+                for (let k = 0; k < 5; k++) { // Tenta 5 ajustes
+                    const idx = Math.floor(Math.random() * 15);
+                    const candidate = top10[Math.floor(Math.random() * top10.length)];
+                    if (!numbers.includes(candidate)) {
+                        // Checa se substituição mantém gaps <=3
+                        const temp = [...numbers];
+                        temp[idx] = candidate;
+                        temp.sort((a,b)=>a-b);
+                        if (checkGaps(temp)) {
+                            numbers = temp;
+                        }
+                    }
+                }
+
+                numbers.sort((a,b)=>a-b);
+
+                // Checar técnicas: pares (7-8), primos (6-8)
+                const paresCount = numbers.filter(n => n % 2 === 0).length;
+                const primosCount = numbers.filter(n => primos.includes(n)).length;
+
+                if ((paresCount >= 7 && paresCount <= 8) && (primosCount >= 6 && primosCount <= 8)) {
+                    return numbers;
+                }
+            }
+            return null; // Falhou após max tries
+        }
+
+        function checkGaps(nums) {
+            for (let i = 1; i < nums.length; i++) {
+                if (nums[i] - nums[i-1] > 3) return false;
+            }
+            return true;
+        }
+    </script>
+</body>
+</html>
