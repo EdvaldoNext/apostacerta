@@ -1,0 +1,16 @@
+body { font-family: Arial, sans-serif; margin: 20px; background-color: #A7348B; font-weight: bold; font-size: 1.1rem;}
+        .container { max-width: 600px; margin: auto; padding: 20px; background: #DB69A2; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        label { display: block; margin: 10px 0 5px; }
+        input, select { width: 95%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background-color: #59b85c; color: white; padding: 10px; border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold; }
+        button:hover { background-color: red; }
+        #result { margin-top: 20px; }
+        .aposta { background: #c5e6b9; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        h2 {
+            display: flex;
+            text-align: center;
+            justify-content: center;
+            color: #A7348B;
+            font-weight: 900;
+
+        }
