@@ -87,7 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function generateSingleBet(hotNumbers, relaxRules) {
         let seq = [];
-        let candidates = [1, 2, 3]; // First number can be 1, 2, or 3 (gap <= 3 from 0 conceptually)
+        let candidates = [1, 2, 3, 4]; // First number can be 1, 2, or 3 (gap <= 3 from 0 conceptually)
 
         let current = candidates[Math.floor(Math.random() * candidates.length)];
         seq.push(current);
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let maxAllowedByLength = 10 + i; // next number must not exceed this to leave room for the rest
 
             let validSteps = [];
-            for (let step = 1; step <= 3; step++) {
+            for (let step = 1; step <= 4; step++) {
                 let nextNum = current + step;
                 if (nextNum <= 25 && nextNum <= 10 + (i + 1)) {
                     validSteps.push(step);
@@ -197,3 +197,4 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
