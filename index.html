@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aposta Certa</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="background-elements">
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+        <div class="glow-orb orb-3"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1><span class="highlight">Aposta-Certa</span></h1>
+            <p>Gere suas apostas balanceando sorte e estatísticas reais comprovadas.</p>
+        </header>
+
+        <section class="config-panel">
+            <div class="input-group">
+                <label for="hot-numbers">
+                    As 10 Dezenas Mais Frequentes <span class="badge">Opcional</span>
+                    <span class="tooltip-icon"
+                        title="O algoritmo dará prioridade a essas dezenas, mantendo as regras estatísticas.">?</span>
+                </label>
+                <input type="text" id="hot-numbers" placeholder="Ex: 1, 4, 13, 22... (separados por vírgula)"
+                    autocomplete="off">
+                <small class="error-msg" id="hot-numbers-error"></small>
+            </div>
+
+            <div class="input-group">
+                <label for="bet-count">Quantidade de Apostas (1 a 10)</label>
+                <input type="number" id="bet-count" min="1" max="10" value="1">
+            </div>
+
+            <div class="button-group">
+                <button id="generate-btn" class="primary-btn">
+                    <span>Gerar Combinações</span>
+                    <div class="loader" id="btn-loader"></div>
+                </button>
+                <button id="view-history-btn" class="secondary-btn">
+                    <span>Ver Histórico</span>
+                </button>
+            </div>
+        </section>
+
+        <section class="results-section" id="results-section">
+            <div class="stats-explanation">
+                <h3>Critérios Aplicados</h3>
+                <ul>
+                    <li><strong>Pares e Ímpares:</strong> Equilíbrio ótimo (7 pares / 8 ímpares ou 8 pares / 7 ímpares).
+                    </li>
+                    <li><strong>Números Primos:</strong> Presença de 6 a 8 números primos por aposta.</li>
+                    <li><strong>Soma das Dezenas:</strong> A soma de todos os números varia apenas entre 171 e 220.</li>
+                    <li><strong>Regra do Espaçamento:</strong> A distância entre دوis números seguidos na aposta
+                        <strong>nunca ultrapassa 3.</strong></li>
+                </ul>
+            </div>
+
+            <div id="games-container" class="games-container">
+                <!-- Jogos gerados entrarão aqui -->
+            </div>
+        </section>
+    </div>
+
+    <!-- Modal de Histórico -->
+    <div id="history-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Histórico de Jogos</h2>
+                <span class="close-btn">&times;</span>
+            </div>
+            <div id="history-list" class="history-list">
+                <!-- Itens do histórico serão carregados aqui -->
+                <p class="empty-msg">Carregando...</p>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
