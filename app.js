@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const supabaseUrl = 'https://nvojtlglmyezxrsxxdcp.supabase.co'; // Substitua pela sua URL do Supabase
-    const supabaseKey = 'sb_publishable_Gb7ROVtVDbmsGE7pAMskew_xoBC4H5t'; // Substitua pela sua anon key do Supabase
+    const supabaseUrl = 'https://epijxziihqnhwghiuuej.supabase.co';
+    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwaWp4emlpaHFuaHdnaGl1dWVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0NTExNTksImV4cCI6MjA4OTAyNzE1OX0.y6bXhXjCgTu5xvlYj4xNRmpnQpxdHHqEmMObnjPtasI';
     const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 
     const btnGenerate = document.getElementById('generate-btn');
