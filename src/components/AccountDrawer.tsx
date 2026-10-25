@@ -8,10 +8,12 @@ import type { BillingMe } from "@/lib/types";
 
 export function AccountDrawer({
   billing,
+  email,
   onClose,
   onLogout,
 }: {
   billing: BillingMe | null;
+  email: string;
   onClose: () => void;
   onLogout: () => void;
 }) {
@@ -38,7 +40,10 @@ export function AccountDrawer({
     <div className="drawer-back" onClick={onClose}>
       <aside className="drawer" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="Conta">
         <div className="spread">
-          <h2>Conta</h2>
+          <div>
+            <h2>Conta</h2>
+            <p className="menu-account-email">{email}</p>
+          </div>
           <button className="ghost" type="button" onClick={onClose}>
             Fechar
           </button>

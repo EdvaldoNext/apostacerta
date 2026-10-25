@@ -1,3 +1,18 @@
+import type { GameId } from "./games";
+
+export interface Sorteio {
+  jogo: GameId;
+  numero: number;
+  dataApuracao: string;
+  dataProximo: string | null;
+  estimativaProximo: number | null;
+  dezenas: number[];
+  dezenasSegundo: number[];
+  trevos: number[];
+  extra: string | null;
+  acumulado: boolean;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -43,4 +58,5 @@ export interface SavedBet {
   created_at: string;
   bets: BetView[];
   total: number;
+  concurso: number | null;
 }

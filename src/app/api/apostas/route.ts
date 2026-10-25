@@ -3,7 +3,14 @@ import { generateBets, type GenerateInput } from "@/lib/generate";
 import { subscriptionGuard } from "@/server/access";
 import { db, nowIso, str, uuid } from "@/server/db";
 import { asInt, asString, fail, json, readJson } from "@/server/http";
+import { latestDraw } from "@/server/loterias";
 import { requireSession } from "@/server/session";
+
+function concursoDoPayload(payload: { concurso?: unknown }): number | null {
+  return typeof payload.concurso === "number" && Number.isInteger(payload.concurso) && payload.concurso > 0
+    ? payload.concurso
+    : null;
+}
 
 function parseInput(body: Record<string, unknown>): GenerateInput | string {
   const jogo = asString(body.jogo);
@@ -57,7 +64,7 @@ export async function GET(req: Request) {
   });
 
   const items = result.rows.map((row) => {
-    const payload = JSON.parse(str(row, "payload")) as { bets: unknown; total: number };
+    const payload = JSON.parse(str(row, "payload")) as { bets: unknown; total: number; concurso?: unknown };
     return {
       id: str(row, "id"),
       jogo: str(row, "jogo"),
@@ -65,6 +72,7 @@ export async function GET(req: Request) {
       created_at: str(row, "created_at"),
       bets: payload.bets,
       total: payload.total,
+      concurso: concursoDoPayload(payload),
     };
   });
   return json({ items });
@@ -87,6 +95,13 @@ export async function POST(req: Request) {
   const total = Math.round(price.total * parsed.count * 100) / 100;
   const id = uuid();
   const createdAt = nowIso();
+  let concurso: number | null = null;
+  try {
+    const ultimo = await latestDraw(parsed.jogo);
+    concurso = ultimo.numero + 1;
+  } catch {
+    concurso = null;
+  }
 
   await db().execute({
     sql: `INSERT INTO apostas (id, user_id, jogo, quantidade, payload, created_at)
@@ -96,7 +111,7 @@ export async function POST(req: Request) {
       auth.user.id,
       parsed.jogo,
       parsed.count,
-      JSON.stringify({ bets, total, pick: parsed.pick, mode: parsed.mode, combos: price.combos }),
+      JSON.stringify({ bets, total, pick: parsed.pick, mode: parsed.mode, combos: price.combos, concurso }),
       createdAt,
     ],
   });
@@ -108,5 +123,6 @@ export async function POST(req: Request) {
     created_at: createdAt,
     bets,
     total,
+    concurso,
   });
 }

@@ -31,19 +31,7 @@ export function AuthScreen({ onAuth }: { onAuth: (user: AuthUser) => void }) {
   return (
     <main className="shell auth">
       <section className="hero">
-        <div>
-          <p className="kicker">Loterias da Caixa</p>
-          <h1>Um volante para cada jogo. Uma conta para cada pessoa.</h1>
-          <p className="muted">
-            Mega-Sena, Lotofácil, Quina, Lotomania, Dupla Sena, Timemania, Dia de Sorte, Super Sete e +Milionária.
-            O histórico fica só na sua conta.
-          </p>
-        </div>
-        <div className="hero-list">
-          <div>Surpresinha ou volante balanceado, com o preço da aposta na hora.</div>
-          <div>Pagamento único de 30 dias ou 12 meses. Não renova sozinho.</div>
-          <div>Simulador. Não vende aposta e não muda a chance de uma combinação.</div>
-        </div>
+        <img className="hero-logo" src="/logo.jpg" alt="Aposta Certa" />
       </section>
       <section className="card">
         <p className="kicker">{mode === "signup" ? "Criar conta" : "Entrar"}</p>

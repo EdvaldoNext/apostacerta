@@ -3,15 +3,18 @@ import { randomUUID } from "node:crypto";
 
 const globalForDb = globalThis as unknown as { __apostacertaDb?: Client };
 
-/** Cliente Turso. Usado somente no servidor. */
+/** Cliente Turso. Sem token no .env.local, usa o arquivo local.db no desenvolvimento. */
 export function db(): Client {
   if (!globalForDb.__apostacertaDb) {
     const url = process.env.TURSO_DATABASE_URL;
     const authToken = process.env.TURSO_AUTH_TOKEN;
-    if (!url || !authToken) {
-      throw new Error("TURSO_DATABASE_URL e TURSO_AUTH_TOKEN precisam estar no .env.local.");
+    if (url && authToken) {
+      globalForDb.__apostacertaDb = createClient({ url, authToken });
+    } else {
+      const fileUrl = "file:local.db";
+      console.warn("[db] TURSO_AUTH_TOKEN ausente. Usando banco local local.db.");
+      globalForDb.__apostacertaDb = createClient({ url: fileUrl });
     }
-    globalForDb.__apostacertaDb = createClient({ url, authToken });
   }
   return globalForDb.__apostacertaDb;
 }
