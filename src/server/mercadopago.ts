@@ -15,6 +15,7 @@ export async function mpFetch<T = unknown>(path: string, init: RequestInit = {})
 
   const response = await fetch(`${mercadoPagoBase()}${path}`, {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(12_000),
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",

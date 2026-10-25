@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, ApiError } from "@/lib/api";
 import { CHECKOUT_TOKEN_KEY } from "@/lib/billing-ui";
 import type { AuthUser, BillingMe } from "@/lib/types";
 import { AccountDrawer } from "./AccountDrawer";
@@ -9,20 +9,55 @@ import { AuthScreen } from "./AuthScreen";
 import { ResultadosScreen } from "./ResultadosScreen";
 import { Studio } from "./Studio";
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new ApiError(0, "timeout", "Não foi possível conferir o acesso."));
+    }, ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function AppShell() {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
   const [billing, setBilling] = useState<BillingMe | null>(null);
+  const [billingError, setBillingError] = useState(false);
+  const billingRef = useRef<BillingMe | null>(null);
+  const billingRequest = useRef(0);
   const [accountOpen, setAccountOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  async function loadBilling() {
-    const me = await api<BillingMe>("/api/billing/me");
-    setBilling(me);
-    return me;
-  }
+  const requestBilling = useCallback(async () => {
+    const id = ++billingRequest.current;
+    try {
+      const me = await withTimeout(api<BillingMe>("/api/billing/me"), 8000);
+      if (billingRequest.current !== id) return null;
+      if (!me) {
+        if (!billingRef.current) setBillingError(true);
+        return null;
+      }
+      billingRef.current = me;
+      setBilling(me);
+      setBillingError(false);
+      return me;
+    } catch {
+      if (billingRequest.current !== id) return null;
+      if (!billingRef.current) setBillingError(true);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -40,39 +75,52 @@ export function AppShell() {
 
   useEffect(() => {
     if (!user) {
+      billingRef.current = null;
+      billingRequest.current += 1;
       setBilling(null);
+      setBillingError(false);
       return;
     }
-    let stopped = false;
-    const token = localStorage.getItem(CHECKOUT_TOKEN_KEY);
-    const refresh = () => loadBilling().catch(() => null);
 
+    let stopped = false;
+    void requestBilling();
+
+    const token = localStorage.getItem(CHECKOUT_TOKEN_KEY);
     if (!token) {
-      refresh();
-      return;
+      return () => {
+        stopped = true;
+        billingRequest.current += 1;
+      };
     }
 
     let tries = 0;
+    let timer = 0;
     const tick = async () => {
       if (stopped || tries >= 8) return;
       tries += 1;
       try {
         await api("/api/billing/link-checkout", { method: "POST", body: { checkout_token: token } });
-        const me = await refresh();
+        const me = await requestBilling();
+        if (stopped) return;
         if (me?.access) {
           localStorage.removeItem(CHECKOUT_TOKEN_KEY);
           return;
         }
-      } catch {
-        /* o webhook pode ainda nao ter chegado */
+      } catch (err) {
+        if (err instanceof ApiError && [400, 404, 409, 410].includes(err.status)) {
+          localStorage.removeItem(CHECKOUT_TOKEN_KEY);
+          return;
+        }
       }
-      if (!stopped) window.setTimeout(tick, 4000);
+      if (!stopped && tries < 8) timer = window.setTimeout(() => void tick(), 4000);
     };
-    tick();
+    void tick();
     return () => {
       stopped = true;
+      billingRequest.current += 1;
+      window.clearTimeout(timer);
     };
-  }, [user]);
+  }, [user, requestBilling]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -113,8 +161,11 @@ export function AppShell() {
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
+    billingRef.current = null;
+    billingRequest.current += 1;
     setUser(null);
     setBilling(null);
+    setBillingError(false);
     setAccountOpen(false);
     setHistoryOpen(false);
     setResultsOpen(false);
@@ -174,7 +225,9 @@ export function AppShell() {
       <Studio
         access={Boolean(billing?.access)}
         billingReady={billing !== null}
+        billingError={billingError && billing === null}
         previewUsed={Boolean(billing?.previewUsed)}
+        onRetryBilling={() => void requestBilling()}
         historyOpen={historyOpen}
         onCloseHistory={() => setHistoryOpen(false)}
         onOpenHistory={openHistory}

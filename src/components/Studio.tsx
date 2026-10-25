@@ -44,21 +44,25 @@ function resolverSituacao(
 export function Studio({
   access,
   billingReady,
+  billingError,
   previewUsed,
   historyOpen,
   onCloseHistory,
   onOpenHistory,
   onNeedAccess,
   onPreviewUsed,
+  onRetryBilling,
 }: {
   access: boolean;
   billingReady: boolean;
+  billingError: boolean;
   previewUsed: boolean;
   historyOpen: boolean;
   onCloseHistory: () => void;
   onOpenHistory: () => void;
   onNeedAccess: () => void;
   onPreviewUsed: () => void;
+  onRetryBilling: () => void;
 }) {
   const [gameId, setGameId] = useState<GameId>("lotofacil");
   const game = GAME_MAP[gameId];
@@ -435,13 +439,15 @@ export function Studio({
       : "Gerando…"
     : tarefa === "cobertura"
       ? "Ver cobertura"
-      : access
-        ? "Gerar jogos"
-        : amostraDisponivel
-          ? "Gerar 1 jogo grátis"
-          : billingReady
-            ? "Assinar para gerar mais"
-            : "Abrindo…";
+      : !billingReady
+        ? billingError
+          ? "Tentar de novo"
+          : "Carregando…"
+        : access
+          ? "Gerar jogos"
+          : amostraDisponivel
+            ? "Gerar 1 jogo grátis"
+            : "Assinar para gerar mais";
 
   return (
     <div>
@@ -473,14 +479,31 @@ export function Studio({
 
       {!access && (
         <div className="banner">
-          {amostraDisponivel
-            ? "O primeiro jogo é grátis e não entra no histórico. "
-            : billingReady
-              ? "A amostra grátis já foi usada. O histórico e os próximos jogos ficam no plano. "
-              : "A geração e o histórico ficam liberados depois do pagamento. "}
-          <button className="text-btn" type="button" onClick={onNeedAccess}>
-            Ver planos
-          </button>
+          {!billingReady && billingError && (
+            <>
+              Não foi possível conferir o acesso.{" "}
+              <button className="text-btn" type="button" onClick={onRetryBilling}>
+                Tentar de novo
+              </button>
+            </>
+          )}
+          {!billingReady && !billingError && "Conferindo o acesso…"}
+          {billingReady && amostraDisponivel && (
+            <>
+              O primeiro jogo é grátis e não entra no histórico.{" "}
+              <button className="text-btn" type="button" onClick={onNeedAccess}>
+                Ver planos
+              </button>
+            </>
+          )}
+          {billingReady && !amostraDisponivel && (
+            <>
+              A amostra grátis já foi usada. O histórico e os próximos jogos ficam no plano.{" "}
+              <button className="text-btn" type="button" onClick={onNeedAccess}>
+                Ver planos
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -622,8 +645,14 @@ export function Studio({
           <button
             className="solid"
             type="button"
-            onClick={generate}
-            disabled={busy || !billingReady || (tarefa === "cobertura" && (pool.length < 16 || pool.length > 20))}
+            onClick={() => {
+              if (!billingReady) {
+                if (billingError) onRetryBilling();
+                return;
+              }
+              void generate();
+            }}
+            disabled={busy || (!billingReady && !billingError) || (tarefa === "cobertura" && (pool.length < 16 || pool.length > 20))}
           >
             {botaoGerar}
           </button>
