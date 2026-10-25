@@ -52,6 +52,12 @@ export function AccountDrawer({
         <p className="hint">
           Cada pagamento libera o período do plano. Não há cobrança automática no mês seguinte.
         </p>
+        <ul className="promise">
+          <li>Guardar os jogos e o histórico</li>
+          <li>Medir cada volante nos últimos 100 concursos</li>
+          <li>Cobertura da Lotofácil com menos bilhetes</li>
+          <li>Conferência quando o concurso sai</li>
+        </ul>
         <div className="stack">
           {(billing?.plans ?? []).map((plan) => (
             <article className="plan" key={plan.slug}>

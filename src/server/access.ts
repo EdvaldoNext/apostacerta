@@ -109,8 +109,13 @@ export async function subscriptionGuard(user: AuthUser): Promise<NextResponse | 
 
 export async function buildBillingMe(user: AuthUser): Promise<BillingMe> {
   const isAdmin = isAdminEmail(user.email);
-  const [sub, plans] = await Promise.all([getOpenSubscription(user.id), listActivePlans()]);
+  const [sub, plans, previewRow] = await Promise.all([
+    getOpenSubscription(user.id),
+    listActivePlans(),
+    db().execute({ sql: "SELECT preview_used FROM users WHERE id = ?", args: [user.id] }),
+  ]);
   const access = isAdmin || subscriptionGrantsAccess(sub);
+  const previewUsed = Number(previewRow.rows[0]?.preview_used ?? 0) === 1;
   const monthly = plans.find((p) => p.slug === DEFAULT_PLAN_SLUG) ?? null;
 
   let subscription: SubscriptionInfo | null = null;
@@ -127,6 +132,7 @@ export async function buildBillingMe(user: AuthUser): Promise<BillingMe> {
   return {
     access,
     isAdmin,
+    previewUsed,
     plan: monthly ? { slug: monthly.slug, name: monthly.name, price_brl: monthly.price_brl, billing_interval: monthly.billing_interval } : null,
     plans: plans.map(({ slug, name, price_brl, billing_interval }) => ({ slug, name, price_brl, billing_interval })),
     subscription,

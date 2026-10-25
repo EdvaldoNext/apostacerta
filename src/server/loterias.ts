@@ -139,11 +139,15 @@ export async function latestDraw(jogo: GameId, fresh = false): Promise<Sorteio> 
   const cached = cache.get(jogo);
   if (!fresh && cached && Date.now() - cached.at < TTL_MS) return cached.sorteio;
 
-  const sorteio = await fromSources(jogo, [
+  const sources = [
     () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, CAIXA_HEADERS),
     () => pull(`https://api.guidi.dev.br/loteria/${jogo}/ultimo`),
     () => pull(`https://raw.githubusercontent.com/maickon/free-apiloterias/refs/heads/master/database/${jogo}/_ultimo.json`),
-  ]);
+  ];
+  const found = await Promise.all(sources.map((source) => source().then((body) => normalize(jogo, body)).catch(() => null)));
+  const draws = found.filter((item): item is Sorteio => item !== null).sort((a, b) => b.numero - a.numero);
+  if (!draws.length) throw new Error("resultado_indisponivel");
+  const sorteio = draws[0];
   cache.set(jogo, { at: Date.now(), sorteio });
   return sorteio;
 }
@@ -156,12 +160,88 @@ export async function contestDraw(jogo: GameId, numero: number): Promise<Sorteio
   const sorteio = await fromSources(
     jogo,
     [
-      () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`, CAIXA_HEADERS),
       () => pull(`https://api.guidi.dev.br/loteria/${jogo}/${numero}`),
       () => pull(`https://raw.githubusercontent.com/maickon/free-apiloterias/refs/heads/master/database/${jogo}/${numero}.json`),
+      () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`, CAIXA_HEADERS),
     ],
     numero,
   );
   contestCache.set(key, sorteio);
   return sorteio;
+}
+
+const recentCache = new Map<GameId, { at: number; numero: number; draws: Sorteio[] }>();
+
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function loadContest(jogo: GameId, numero: number, source: "caixa" | "guidi"): Promise<Sorteio | null> {
+  const key = `${jogo}:${numero}`;
+  const cached = contestCache.get(key);
+  if (cached) return cached;
+  const url =
+    source === "guidi"
+      ? `https://api.guidi.dev.br/loteria/${jogo}/${numero}`
+      : `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`;
+  try {
+    const sorteio = normalize(jogo, await pull(url, source === "caixa" ? CAIXA_HEADERS : undefined));
+    if (!sorteio || sorteio.numero !== numero) return null;
+    contestCache.set(key, sorteio);
+    return sorteio;
+  } catch {
+    return null;
+  }
+}
+
+export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]> {
+  const latest = await latestDraw(jogo);
+  const want = Math.max(1, Math.min(take, latest.numero));
+  const goal = jogo === "supersete" ? Math.min(want, 6) : want;
+  const cached = recentCache.get(jogo);
+  if (cached && cached.numero === latest.numero && cached.draws.length >= Math.min(5, goal) && Date.now() - cached.at < TTL_MS) {
+    return cached.draws.slice(0, goal);
+  }
+
+  const start = latest.numero - goal + 1;
+  const byNumero = new Map<number, Sorteio>();
+  byNumero.set(latest.numero, latest);
+
+  const missing = () => {
+    const numeros: number[] = [];
+    for (let numero = start; numero < latest.numero; numero++) {
+      if (!byNumero.has(numero)) numeros.push(numero);
+    }
+    return numeros;
+  };
+
+  const pullMissing = async (source: "caixa" | "guidi", limit: number, cap = Number.POSITIVE_INFINITY) => {
+    const numeros = missing().slice(0, cap);
+    if (!numeros.length) return;
+    const fetched = await mapPool(numeros, limit, (numero) => loadContest(jogo, numero, source));
+    for (const item of fetched) {
+      if (item) byNumero.set(item.numero, item);
+    }
+  };
+
+  if (jogo === "supersete") {
+    await pullMissing("guidi", 2, 5);
+  } else {
+    await pullMissing("caixa", 4);
+    if (missing().length) await pullMissing("guidi", 2, 6);
+  }
+
+  const draws = [...byNumero.values()].sort((a, b) => b.numero - a.numero);
+  if (draws.length < Math.min(5, goal)) throw new Error("estatisticas_insuficientes");
+  recentCache.set(jogo, { at: Date.now(), numero: latest.numero, draws });
+  return draws.slice(0, goal);
 }

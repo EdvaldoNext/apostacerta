@@ -32,6 +32,15 @@ export function AuthScreen({ onAuth }: { onAuth: (user: AuthUser) => void }) {
     <main className="shell auth">
       <section className="hero">
         <img className="hero-logo" src="/logo.jpg" alt="Aposta Certa" />
+        <div>
+          <p className="kicker">Loterias da Caixa</p>
+          <h1>Monte o volante com o histórico, veja o preço e confira o concurso.</h1>
+          <ul className="promise">
+            <li>Um jogo grátis para ver o volante</li>
+            <li>Frequentes, atrasadas e repetidas do último concurso</li>
+            <li>Conferência quando o resultado sai</li>
+          </ul>
+        </div>
       </section>
       <section className="card">
         <p className="kicker">{mode === "signup" ? "Criar conta" : "Entrar"}</p>

@@ -37,9 +37,21 @@ export interface SubscriptionInfo {
 export interface BillingMe {
   access: boolean;
   isAdmin: boolean;
+  previewUsed: boolean;
   plan: PlanInfo | null;
   plans: PlanInfo[];
   subscription: SubscriptionInfo | null;
+}
+
+export interface BetStats {
+  evens: number;
+  odds: number;
+  sum: number;
+  primes?: number;
+  frequentes?: number;
+  atrasadas?: number;
+  repetidas?: number;
+  concursoBase?: number;
 }
 
 export interface BetView {
@@ -48,7 +60,7 @@ export interface BetView {
   trevos?: number[];
   mes?: string;
   time?: string;
-  stats: { evens: number; odds: number; sum: number; primes?: number };
+  stats: BetStats;
 }
 
 export interface SavedBet {
@@ -59,4 +71,5 @@ export interface SavedBet {
   bets: BetView[];
   total: number;
   concurso: number | null;
+  preview?: boolean;
 }

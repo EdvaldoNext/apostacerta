@@ -187,8 +187,11 @@ input:focus, select:focus { outline: 2px solid rgba(231, 199, 138, 0.45); border
   border: 1px solid var(--line);
   background: transparent;
   padding: 10px 12px;
+  white-space: nowrap;
 }
 .modes button[aria-pressed="true"] { background: var(--accent); color: #111; border-color: transparent; font-weight: 700; }
+.stat-note { display: grid; gap: 4px; }
+.stat-note p { margin: 0; }
 
 .volante { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
 .volante[data-cols="5"] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -231,6 +234,31 @@ input:focus, select:focus { outline: 2px solid rgba(231, 199, 138, 0.45); border
   padding: 12px 14px;
   margin-bottom: 14px;
 }
+.promise { margin: 12px 0 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }
+.hero h1 { margin: 8px 0 0; font-family: var(--font-display), Georgia, serif; font-size: 1.8rem; font-weight: 560; letter-spacing: -0.03em; line-height: 1.15; }
+.next-draw { margin: 6px 0 0; color: var(--gold); font-weight: 700; }
+.fold { display: grid; gap: 8px; }
+.fold > button {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  padding: 10px 12px;
+  text-align: left;
+}
+.fold > button[aria-pressed="true"] { background: var(--accent); color: #111; border-color: transparent; font-weight: 700; }
+.check { display: flex; align-items: center; gap: 8px; }
+.check input { width: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 8px 0; color: var(--muted); font-size: 0.82rem; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); display: inline-block; }
+.swatch.freq { box-shadow: inset 0 0 0 2px var(--gold); }
+.swatch.atraso { box-shadow: inset 0 0 0 2px #8eb4ff; }
+.swatch.repetida { box-shadow: inset 0 -3px 0 #e7c78a; }
+.swatch.fav { background: var(--accent); border-color: transparent; }
+.ball.is-freq:not([aria-pressed="true"]) { box-shadow: inset 0 0 0 2px var(--gold); }
+.ball.is-atraso:not([aria-pressed="true"]) { box-shadow: inset 0 0 0 2px #8eb4ff; }
+.ball.is-repetida:not([aria-pressed="true"]) { box-shadow: inset 0 -3px 0 #e7c78a; }
+.ball.is-freq.is-repetida:not([aria-pressed="true"]) { box-shadow: inset 0 0 0 2px var(--gold), inset 0 -3px 0 #f6f1e7; }
 .drawer-back {
   position: fixed;
   inset: 0;

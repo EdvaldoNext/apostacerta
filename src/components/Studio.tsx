@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { coberturaLotofacil, type CoberturaLotofacil } from "@/lib/cobertura";
 import { conferir, dezenaAcertou, situacaoDaAposta, type SituacaoAposta } from "@/lib/conferir";
+import type { ResumoEstatistica } from "@/lib/estatisticas";
 import { formatBRL, formatTimestampBR } from "@/lib/format";
 import { GAMES, GAME_MAP, MESES, TIMES, isGameId, padNumber, quote, type GameId } from "@/lib/games";
 import type { BetView, SavedBet, Sorteio } from "@/lib/types";
@@ -41,18 +43,28 @@ function resolverSituacao(
 
 export function Studio({
   access,
+  billingReady,
+  previewUsed,
   historyOpen,
   onCloseHistory,
+  onOpenHistory,
   onNeedAccess,
+  onPreviewUsed,
 }: {
   access: boolean;
+  billingReady: boolean;
+  previewUsed: boolean;
   historyOpen: boolean;
   onCloseHistory: () => void;
+  onOpenHistory: () => void;
   onNeedAccess: () => void;
+  onPreviewUsed: () => void;
 }) {
   const [gameId, setGameId] = useState<GameId>("lotofacil");
   const game = GAME_MAP[gameId];
-  const [mode, setMode] = useState<"balanceado" | "surpresa">("balanceado");
+  const [mode, setMode] = useState<"estatistico" | "surpresa">("estatistico");
+  const [resumo, setResumo] = useState<Partial<Record<GameId, ResumoEstatistica>>>({});
+  const [resumoEstado, setResumoEstado] = useState<Partial<Record<GameId, "loading" | "error">>>({});
   const [count, setCount] = useState(1);
   const [pick, setPick] = useState(game.pickMin);
   const [hot, setHot] = useState<number[]>([]);
@@ -64,6 +76,12 @@ export function Studio({
   const [current, setCurrent] = useState<SavedBet | null>(null);
   const [history, setHistory] = useState<SavedBet[]>([]);
   const [copied, setCopied] = useState("");
+  const [gapOn, setGapOn] = useState(false);
+  const [gapMax, setGapMax] = useState(3);
+  const [tarefa, setTarefa] = useState<"gerar" | "cobertura">("gerar");
+  const [pool, setPool] = useState<number[]>([]);
+  const [coberturaView, setCoberturaView] = useState<CoberturaLotofacil | null>(null);
+  const [retro, setRetro] = useState<{ id: string; janela: number; rotulo: string; vezes: number[]; erro: boolean } | null>(null);
   const [sorteios, setSorteios] = useState<Partial<Record<GameId, Sorteio>>>({});
   const [resultadoEstado, setResultadoEstado] = useState<Partial<Record<GameId, "loading" | "error">>>({});
   const [anteriores, setAnteriores] = useState<Partial<Record<GameId, Sorteio>>>({});
@@ -106,13 +124,44 @@ export function Studio({
   useEffect(() => {
     setPick(GAME_MAP[gameId].pickMin);
     setHot([]);
+    setPool([]);
+    setTarefa("gerar");
+    setCoberturaView(null);
     setCurrent(null);
     setError("");
   }, [gameId]);
 
+  const pedidosEstat = useRef(new Set<GameId>());
+  const pedirEstatisticas = useCallback((jogo: GameId, fresh = false) => {
+    if (!fresh && pedidosEstat.current.has(jogo)) return;
+    pedidosEstat.current.add(jogo);
+    setResumoEstado((prev) => ({ ...prev, [jogo]: "loading" }));
+    api<ResumoEstatistica>(`/api/estatisticas?jogo=${jogo}`)
+      .then((res) => {
+        if (!vivo.current) return;
+        setResumo((prev) => ({ ...prev, [jogo]: res }));
+        setResumoEstado((prev) => {
+          const next = { ...prev };
+          delete next[jogo];
+          return next;
+        });
+      })
+      .catch(() => {
+        pedidosEstat.current.delete(jogo);
+        if (!vivo.current) return;
+        setResumoEstado((prev) => ({ ...prev, [jogo]: "error" }));
+      });
+  }, []);
+
   useEffect(() => {
     pedirSorteio(gameId);
   }, [gameId, pedirSorteio]);
+
+  useEffect(() => {
+    if (mode !== "estatistico") return;
+    if (resumo[gameId] || resumoEstado[gameId]) return;
+    pedirEstatisticas(gameId);
+  }, [mode, gameId, resumo, resumoEstado, pedirEstatisticas]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -212,6 +261,9 @@ export function Studio({
     return list;
   }, [game]);
 
+  const amostraDisponivel = billingReady && !access && !previewUsed;
+  const marcados = tarefa === "cobertura" ? pool : hot;
+
   function toggleHot(n: number) {
     setHot((prev) => {
       if (prev.includes(n)) return prev.filter((item) => item !== n);
@@ -220,8 +272,38 @@ export function Studio({
     });
   }
 
+  function togglePool(n: number) {
+    setPool((prev) => {
+      if (prev.includes(n)) return prev.filter((item) => item !== n);
+      if (prev.length >= 20) return prev;
+      return [...prev, n].sort((a, b) => a - b);
+    });
+    setCoberturaView(null);
+  }
+
+  function usarFrequentes() {
+    const lista = resumo[gameId]?.frequentes ?? [];
+    const limite = Math.min(10, pick);
+    setHot(lista.filter((n) => n >= game.min && n <= game.max).slice(0, limite));
+  }
+
   async function generate() {
-    if (!access) {
+    if (tarefa === "cobertura") {
+      if (!access) {
+        onNeedAccess();
+        return;
+      }
+      const resultado = coberturaLotofacil(pool);
+      if (!resultado) {
+        setError("Marque de 16 a 20 dezenas no volante.");
+        return;
+      }
+      setError("");
+      setCurrent(null);
+      setCoberturaView(resultado);
+      return;
+    }
+    if (!access && !amostraDisponivel) {
       onNeedAccess();
       return;
     }
@@ -230,13 +312,50 @@ export function Studio({
     try {
       const saved = await api<SavedBet>("/api/apostas", {
         method: "POST",
-        body: { jogo: gameId, count, pick, mode, hot, trevos, mes: mes || null, time: time || null },
+        body: {
+          jogo: gameId,
+          count: access ? count : 1,
+          pick,
+          mode,
+          hot,
+          trevos,
+          mes: mes || null,
+          time: time || null,
+          preview: !access,
+          gapMax: gapOn && gameId === "lotofacil" && pick === 15 && mode === "estatistico" ? gapMax : null,
+        },
+      });
+      setCoberturaView(null);
+      setCurrent(saved);
+      if (saved.preview) onPreviewUsed();
+      else setHistory((prev) => [saved, ...prev].slice(0, 30));
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 402 || err.message.includes("amostra"))) onNeedAccess();
+      setError(err instanceof ApiError ? err.message : "Não foi possível gerar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function guardarCobertura() {
+    if (!coberturaView || !access) {
+      onNeedAccess();
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await api<SavedBet>("/api/apostas", {
+        method: "POST",
+        body: { jogo: "lotofacil", fixas: coberturaView.jogos },
       });
       setCurrent(saved);
+      setCoberturaView(null);
+      setTarefa("gerar");
       setHistory((prev) => [saved, ...prev].slice(0, 30));
     } catch (err) {
       if (err instanceof ApiError && err.status === 402) onNeedAccess();
-      setError(err instanceof ApiError ? err.message : "Não foi possível gerar.");
+      setError(err instanceof ApiError ? err.message : "Não foi possível guardar.");
     } finally {
       setBusy(false);
     }
@@ -254,6 +373,75 @@ export function Studio({
     await navigator.clipboard.writeText(line);
     setCopied(line);
   }
+
+  const retroAlvo = useMemo(() => {
+    if (current) return { id: current.id, jogo: current.jogo, bets: current.bets };
+    if (!coberturaView) return null;
+    const bets: BetView[] = coberturaView.jogos.map((numbers) => ({
+      numbers,
+      stats: { evens: 0, odds: 0, sum: 0 },
+    }));
+    return {
+      id: `cobertura:${coberturaView.dezenas.join("-")}:${coberturaView.jogos.length}`,
+      jogo: "lotofacil" as const,
+      bets,
+    };
+  }, [current, coberturaView]);
+
+  useEffect(() => {
+    if (!retroAlvo || !billingReady) {
+      setRetro(null);
+      return;
+    }
+    const janela = access ? 100 : 20;
+    const id = retroAlvo.id;
+    let cancel = false;
+    setRetro({ id, janela, rotulo: "", vezes: [], erro: false });
+    api<{ janela: number; rotulo: string; vezes: number[] }>("/api/retro", {
+      method: "POST",
+      body: {
+        jogo: retroAlvo.jogo,
+        janela,
+        bets: retroAlvo.bets.map((bet) => ({
+          numbers: bet.numbers,
+          trevos: bet.trevos,
+          mes: bet.mes,
+          time: bet.time,
+        })),
+      },
+    })
+      .then((res) => {
+        if (!cancel) setRetro({ id, janela: res.janela, rotulo: res.rotulo, vezes: res.vezes, erro: false });
+      })
+      .catch(() => {
+        if (!cancel) setRetro({ id, janela, rotulo: "", vezes: [], erro: true });
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [retroAlvo, access, billingReady]);
+
+  function linhaRetro(id: string, index: number): string {
+    if (!retro || retro.id !== id) return "";
+    if (retro.erro) return "Não foi possível medir os concursos anteriores agora.";
+    if (!retro.rotulo) return "Conferindo os concursos anteriores…";
+    const prefixo = access ? "" : "Amostra: ";
+    return `${prefixo}Nos últimos ${retro.janela} concursos, ${retro.rotulo} em ${retro.vezes[index] ?? 0}.`;
+  }
+
+  const botaoGerar = busy
+    ? tarefa === "cobertura"
+      ? "Guardando…"
+      : "Gerando…"
+    : tarefa === "cobertura"
+      ? "Ver cobertura"
+      : access
+        ? "Gerar jogos"
+        : amostraDisponivel
+          ? "Gerar 1 jogo grátis"
+          : billingReady
+            ? "Assinar para gerar mais"
+            : "Abrindo…";
 
   return (
     <div>
@@ -273,9 +461,23 @@ export function Studio({
         ))}
       </div>
 
+      {conferenciaDoJogo.premiadas > 0 && sorteio && (
+        <div className="banner">
+          {conferenciaDoJogo.premiadas}{" "}
+          {conferenciaDoJogo.premiadas === 1 ? "aposta pontuou" : "apostas pontuaram"} no concurso {sorteio.numero}.{" "}
+          <button className="text-btn" type="button" onClick={onOpenHistory}>
+            Ver histórico
+          </button>
+        </div>
+      )}
+
       {!access && (
         <div className="banner">
-          A geração e o histórico ficam liberados depois do pagamento.{" "}
+          {amostraDisponivel
+            ? "O primeiro jogo é grátis e não entra no histórico. "
+            : billingReady
+              ? "A amostra grátis já foi usada. O histórico e os próximos jogos ficam no plano. "
+              : "A geração e o histórico ficam liberados depois do pagamento. "}
           <button className="text-btn" type="button" onClick={onNeedAccess}>
             Ver planos
           </button>
@@ -291,14 +493,25 @@ export function Studio({
           </div>
 
           <div className="modes">
-            <button type="button" aria-pressed={mode === "balanceado"} onClick={() => setMode("balanceado")}>
-              Balanceado
+            <button type="button" aria-pressed={mode === "estatistico"} onClick={() => setMode("estatistico")}>
+              Estatísticas
             </button>
             <button type="button" aria-pressed={mode === "surpresa"} onClick={() => setMode("surpresa")}>
               Surpresinha
             </button>
           </div>
+          {mode === "estatistico" && (
+            <EstatisticaResumo
+              gameId={gameId}
+              pad={game.pad}
+              data={resumo[gameId]}
+              estado={resumoEstado[gameId]}
+              onRetry={() => pedirEstatisticas(gameId, true)}
+            />
+          )}
 
+          {tarefa === "gerar" && (
+            <>
           <label>
             Apostas: {count}
             <input type="range" min={1} max={10} value={count} onChange={(e) => setCount(Number(e.target.value))} />
@@ -355,19 +568,74 @@ export function Studio({
               </select>
             </label>
           )}
+            </>
+          )}
 
-          <p className="range">
-            <span>
-              {price.combos} combinação{price.combos === 1 ? "" : "ões"} por aposta
-            </span>
-            <strong>{formatBRL(total)}</strong>
-          </p>
-          <button className="solid" type="button" onClick={generate} disabled={busy}>
-            {busy ? "Gerando…" : access ? "Gerar jogos" : "Assinar para gerar"}
+          {game.id === "lotofacil" && pick === 15 && mode === "estatistico" && tarefa === "gerar" && (
+            <div className="fold">
+              <label className="check">
+                <input type="checkbox" checked={gapOn} onChange={(event) => setGapOn(event.target.checked)} />
+                Limitar salto entre dezenas
+              </label>
+              {gapOn && (
+                <label>
+                  Salto máximo: {gapMax}
+                  <input type="range" min={2} max={5} value={gapMax} onChange={(event) => setGapMax(Number(event.target.value))} />
+                </label>
+              )}
+              <p className="fine">
+                Desligado, o volante segue pares, soma e o histórico. Ligado, dezenas ordenadas ficam a no máximo esse salto.
+              </p>
+            </div>
+          )}
+
+          {game.id === "lotofacil" && (
+            <div className="fold">
+              <button
+                type="button"
+                aria-pressed={tarefa === "cobertura"}
+                onClick={() => {
+                  setTarefa((atual) => (atual === "cobertura" ? "gerar" : "cobertura"));
+                  setCoberturaView(null);
+                  setError("");
+                }}
+              >
+                Cobrir com menos bilhetes
+              </button>
+              {tarefa === "cobertura" && (
+                <p className="fine">
+                  Marque de 16 a 20 dezenas no volante. Os filtros de geração ficam de fora enquanto a cobertura está aberta.
+                  {pool.length < 16 ? ` Faltam ${16 - pool.length}.` : ""}
+                </p>
+              )}
+            </div>
+          )}
+
+          {tarefa === "gerar" && (
+            <p className="range">
+              <span>
+                {price.combos} combinação{price.combos === 1 ? "" : "ões"} por aposta
+              </span>
+              <strong>{formatBRL(total)}</strong>
+            </p>
+          )}
+          <button
+            className="solid"
+            type="button"
+            onClick={generate}
+            disabled={busy || !billingReady || (tarefa === "cobertura" && (pool.length < 16 || pool.length > 20))}
+          >
+            {botaoGerar}
           </button>
           <p className="error">{error}</p>
           <p className="fine">
-            Os filtros deixam o volante parecido com os padrões mais comuns. Cada combinação continua com a mesma chance.
+            {tarefa === "cobertura"
+              ? "A cobertura reduz a quantidade de bilhetes para uma faixa combinada. Cada jogo de 15 continua com a mesma chance."
+              : mode === "estatistico"
+                ? game.id === "supersete"
+                  ? "Estatísticas prioriza, em cada coluna, o dígito mais frequente, o atrasado e o repetido do último concurso. Cada combinação continua com a mesma chance."
+                  : "Estatísticas prioriza as dezenas que mais saíram, as atrasadas e as repetidas do último concurso. Cada combinação continua com a mesma chance."
+                : "Surpresinha sorteia o volante sem esses filtros. Cada combinação continua com a mesma chance."}
           </p>
         </section>
 
@@ -385,24 +653,78 @@ export function Studio({
           ) : (
             <>
               <div className="spread">
-                <h3>Favoritos</h3>
-                <span className="muted">{hot.length}/10</span>
+                <h3>{tarefa === "cobertura" ? "Dezenas da cobertura" : "Favoritos"}</h3>
+                <span className="muted">{tarefa === "cobertura" ? `${pool.length}/20` : `${hot.length}/10`}</span>
               </div>
-              <p className="fine">Eles têm prioridade. Se não couberem na regra do jogo, o volante segue sem forçar.</p>
+              {tarefa === "gerar" && mode === "estatistico" && (
+                <button className="text-btn" type="button" onClick={usarFrequentes}>
+                  Usar as frequentes
+                </button>
+              )}
+              <p className="legend">
+                <span><i className="swatch freq" /> Frequente</span>
+                <span><i className="swatch atraso" /> Atrasada</span>
+                <span><i className="swatch repetida" /> Repetida</span>
+                <span><i className="swatch fav" /> {tarefa === "cobertura" ? "Marcada" : "Favorita"}</span>
+              </p>
+              <p className="fine">
+                {tarefa === "cobertura"
+                  ? "Estas dezenas formam o grupo da cobertura."
+                  : "Elas têm prioridade. Se não couberem na regra do jogo, o volante segue sem forçar."}
+              </p>
               <div className="volante" data-cols={cols}>
-                {numbers.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className="ball"
-                    aria-pressed={hot.includes(n)}
-                    onClick={() => toggleHot(n)}
-                  >
-                    {padNumber(n, game.pad)}
-                  </button>
-                ))}
+                {numbers.map((n) => {
+                  const papel = resumo[gameId];
+                  const classes = ["ball"];
+                  if (papel?.frequentes.includes(n)) classes.push("is-freq");
+                  if (papel?.atrasadas.includes(n)) classes.push("is-atraso");
+                  if (papel?.repetidas.includes(n)) classes.push("is-repetida");
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      className={classes.join(" ")}
+                      aria-pressed={marcados.includes(n)}
+                      onClick={() => (tarefa === "cobertura" ? togglePool(n) : toggleHot(n))}
+                    >
+                      {padNumber(n, game.pad)}
+                    </button>
+                  );
+                })}
               </div>
             </>
+          )}
+
+          {coberturaView && (
+            <div style={{ marginTop: 22 }}>
+              <div className="spread">
+                <h3>Cobertura</h3>
+                <span>{formatBRL(coberturaView.total)}</span>
+              </div>
+              <p className="fine">
+                {coberturaView.jogos.length} jogos em vez de {coberturaView.completos}. Todas as combinações sairiam por{" "}
+                {formatBRL(coberturaView.totalCheio)}.
+              </p>
+              <p className="fine">{coberturaView.frase}</p>
+              {coberturaView.jogos.map((numbers, index) => (
+                <BetCard
+                  key={`cobertura-${index}`}
+                  bet={{ numbers, stats: { evens: numbers.filter((n) => n % 2 === 0).length, odds: numbers.filter((n) => n % 2 !== 0).length, sum: numbers.reduce((a, b) => a + b, 0) } }}
+                  index={index}
+                  gameId="lotofacil"
+                  gamePad={2}
+                  sorteio={null}
+                  pendente=""
+                  createdAt=""
+                  copied={copied}
+                  retroLinha={linhaRetro(retroAlvo?.id ?? "", index)}
+                  onCopy={copyBet}
+                />
+              ))}
+              <button className="solid" type="button" onClick={() => void guardarCobertura()} disabled={busy}>
+                {busy ? "Guardando…" : "Guardar estes jogos"}
+              </button>
+            </div>
           )}
 
           {current && (
@@ -411,6 +733,7 @@ export function Studio({
                 <h3>Jogos gerados</h3>
                 <span>{formatBRL(current.total)}</span>
               </div>
+              {current.preview && <p className="fine">Este jogo não entra no histórico.</p>}
               {current.bets.map((bet, index) => {
                 const situacao =
                   current.jogo === gameId
@@ -435,6 +758,7 @@ export function Studio({
                     pendente={pendente}
                     createdAt={current.created_at}
                     copied={copied}
+                    retroLinha={linhaRetro(current.id, index)}
                     onCopy={copyBet}
                   />
                 );
@@ -457,6 +781,55 @@ export function Studio({
           onNeedAccess={onNeedAccess}
         />
       )}
+    </div>
+  );
+}
+
+function EstatisticaResumo({
+  gameId,
+  pad,
+  data,
+  estado,
+  onRetry,
+}: {
+  gameId: GameId;
+  pad: number;
+  data: ResumoEstatistica | undefined;
+  estado: "loading" | "error" | undefined;
+  onRetry: () => void;
+}) {
+  if (!data && estado === "error") {
+    return (
+      <p className="fine">
+        As estatísticas não carregaram. O volante segue só com o filtro de pares, soma e primos.{" "}
+        <button className="text-btn" type="button" onClick={onRetry}>
+          Tentar de novo
+        </button>
+      </p>
+    );
+  }
+  if (!data) return <p className="fine">Lendo os últimos concursos…</p>;
+
+  if (gameId === "supersete" && data.colunas) {
+    return (
+      <p className="fine">
+        Últimos {data.janela} concursos, até o {data.concurso}. Dígito mais frequente:{" "}
+        {data.colunas.map((coluna, index) => `C${index + 1} ${coluna.frequente}`).join(" · ")}
+      </p>
+    );
+  }
+
+  return (
+    <div className="stat-note">
+      <p className="fine">
+        Últimos {data.janela} concursos, até o {data.concurso}. As repetidas desse concurso também entram no peso.
+      </p>
+      <p className="fine">Frequentes {data.frequentes.map((n) => padNumber(n, pad)).join(" ")}</p>
+      <p className="fine">
+        Atrasadas {data.atrasadas.length ? data.atrasadas.map((n) => padNumber(n, pad)).join(" ") : "nenhuma fora das frequentes"}
+      </p>
+      {data.trevosFrequentes.length > 0 && <p className="fine">Trevos frequentes {data.trevosFrequentes.join(" ")}</p>}
+      {data.mesFrequente && <p className="fine">Mês mais frequente {data.mesFrequente}</p>}
     </div>
   );
 }
@@ -589,6 +962,12 @@ function HistoryDrawer({
                         {bet.trevos ? `Trevos ${bet.trevos.join(" ")}` : ""}
                         {bet.mes ? bet.mes : ""}
                         {bet.time ? bet.time : ""}
+                        {bet.stats.concursoBase !== undefined && (
+                          <span>
+                            {bet.stats.frequentes ?? 0} frequentes · {bet.stats.atrasadas ?? 0} atrasadas · {bet.stats.repetidas ?? 0}{" "}
+                            repetidas do {bet.stats.concursoBase}
+                          </span>
+                        )}
                       </p>
                     </div>
                   );
@@ -611,6 +990,7 @@ function BetCard({
   pendente,
   createdAt,
   copied,
+  retroLinha,
   onCopy,
 }: {
   bet: BetView;
@@ -621,6 +1001,7 @@ function BetCard({
   pendente: string;
   createdAt: string;
   copied: string;
+  retroLinha: string;
   onCopy: (bet: BetView) => void;
 }) {
   const line = bet.numbers.map((n) => padNumber(n, gamePad)).join(" ");
@@ -660,12 +1041,19 @@ function BetCard({
         </span>
         <span className="pill">Soma {bet.stats.sum}</span>
         {bet.stats.primes !== undefined && <span className="pill">{bet.stats.primes} primos</span>}
+        {bet.stats.concursoBase !== undefined && (
+          <span className="pill">
+            {bet.stats.frequentes ?? 0} frequentes · {bet.stats.atrasadas ?? 0} atrasadas · {bet.stats.repetidas ?? 0} repetidas do{" "}
+            {bet.stats.concursoBase}
+          </span>
+        )}
         {bet.trevos && (
           <span className={aplicavel && check?.trevos ? "pill win" : "pill"}>Trevos {bet.trevos.map((n) => padNumber(n, 1)).join(" ")}</span>
         )}
         {bet.mes && <span className={aplicavel && check?.extra ? "pill win" : "pill"}>{bet.mes}</span>}
         {bet.time && <span className={aplicavel && check?.extra ? "pill win" : "pill"}>{bet.time}</span>}
       </div>
+      {retroLinha && <p className="fine">{retroLinha}</p>}
     </article>
   );
 }
@@ -710,6 +1098,12 @@ function ResultadoCard({
       <div className="spread">
         <div>
           <p className="kicker">Concurso {sorteio.numero}</p>
+          {sorteio.dataProximo && (
+            <p className="next-draw">
+              Próximo sorteio em {sorteio.dataProximo}
+              {sorteio.estimativaProximo ? ` · estimativa ${formatBRL(sorteio.estimativaProximo)}` : ""}
+            </p>
+          )}
           <h3>Resultado · {sorteio.dataApuracao}</h3>
         </div>
         <button className="text-btn" type="button" onClick={onRefresh} disabled={estado === "loading"}>
@@ -749,12 +1143,6 @@ function ResultadoCard({
         </p>
       ) : (
         <p className="fine">No histórico, as dezenas só ficam verdes depois do resultado do concurso da aposta.</p>
-      )}
-      {sorteio.dataProximo && (
-        <p className="fine">
-          Próximo sorteio em {sorteio.dataProximo}
-          {sorteio.estimativaProximo ? ` · estimativa ${formatBRL(sorteio.estimativaProximo)}` : ""}
-        </p>
       )}
       <p className="fine">A conferência usa o resultado publicado. O volante continua só no Aposta Certa.</p>
     </article>

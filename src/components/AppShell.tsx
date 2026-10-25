@@ -173,9 +173,13 @@ export function AppShell() {
       </header>
       <Studio
         access={Boolean(billing?.access)}
+        billingReady={billing !== null}
+        previewUsed={Boolean(billing?.previewUsed)}
         historyOpen={historyOpen}
         onCloseHistory={() => setHistoryOpen(false)}
+        onOpenHistory={openHistory}
         onNeedAccess={openAccount}
+        onPreviewUsed={() => setBilling((prev) => (prev ? { ...prev, previewUsed: true } : prev))}
       />
       {accountOpen && (
         <AccountDrawer
