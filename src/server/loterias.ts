@@ -65,8 +65,54 @@ function parseSuperSete(value: unknown): number[] | null {
   return nums;
 }
 
-function normalize(jogo: GameId, body: unknown): Sorteio | null {
+function adaptPayload(body: unknown): unknown {
   const row = asRecord(body);
+  if (!row || row.listaDezenas || row.concurso === undefined || !Array.isArray(row.dezenas)) return body;
+  const dezenas = row.dezenas.map((item) => String(item));
+  const split = dezenas.length === 12;
+  const trevos = Array.isArray(row.trevos) ? row.trevos : [];
+  return {
+    numero: row.concurso,
+    dataApuracao: row.data,
+    dataProximoConcurso: row.dataProximoConcurso,
+    valorEstimadoProximoConcurso: row.valorEstimadoProximoConcurso,
+    acumulado: row.acumulou === true,
+    listaDezenas: split ? dezenas.slice(0, 6) : dezenas,
+    listaDezenasSegundoSorteio: split ? dezenas.slice(6) : null,
+    trevosSorteados: trevos.length ? trevos : null,
+    nomeTimeCoracaoMesSorte: cleanText(row.timeCoracao) || cleanText(row.mesSorte),
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STALE_LATEST_DAYS = 7;
+
+function brDateUtc(value: string): number | null {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) return null;
+  return Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+}
+
+function todayBrUtc(now = new Date()): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const [year, month, day] = parts.split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function isCurrentDraw(sorteio: Sorteio, now = new Date()): boolean {
+  const draw = brDateUtc(sorteio.dataApuracao);
+  if (draw === null) return false;
+  const age = (todayBrUtc(now) - draw) / DAY_MS;
+  return age >= -1 && age <= STALE_LATEST_DAYS;
+}
+
+function normalize(jogo: GameId, body: unknown): Sorteio | null {
+  const row = asRecord(adaptPayload(body));
   if (!row) return null;
   const numero = typeof row.numero === "number" ? row.numero : Number(row.numero);
   const dataApuracao = cleanText(row.dataApuracao);
@@ -140,12 +186,15 @@ export async function latestDraw(jogo: GameId, fresh = false): Promise<Sorteio> 
   if (!fresh && cached && Date.now() - cached.at < TTL_MS) return cached.sorteio;
 
   const sources = [
-    () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, CAIXA_HEADERS),
-    () => pull(`https://api.guidi.dev.br/loteria/${jogo}/ultimo`),
-    () => pull(`https://raw.githubusercontent.com/maickon/free-apiloterias/refs/heads/master/database/${jogo}/_ultimo.json`),
+    () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, CAIXA_HEADERS, 4000),
+    () => pull(`https://api.guidi.dev.br/loteria/${jogo}/ultimo`, undefined, 4000),
+    () => pull(`https://api.brasilapifacil.com.br/v1/loteria/${jogo}/ultimo`, undefined, 8000),
+    () => pull(`https://raw.githubusercontent.com/maickon/free-apiloterias/refs/heads/master/database/${jogo}/_ultimo.json`, undefined, 4000),
   ];
   const found = await Promise.all(sources.map((source) => source().then((body) => normalize(jogo, body)).catch(() => null)));
-  const draws = found.filter((item): item is Sorteio => item !== null).sort((a, b) => b.numero - a.numero);
+  const draws = found
+    .filter((item): item is Sorteio => item !== null && isCurrentDraw(item))
+    .sort((a, b) => b.numero - a.numero);
   if (!draws.length) throw new Error("resultado_indisponivel");
   const sorteio = draws[0];
   cache.set(jogo, { at: Date.now(), sorteio });
@@ -161,6 +210,7 @@ export async function contestDraw(jogo: GameId, numero: number): Promise<Sorteio
     jogo,
     [
       () => pull(`https://api.guidi.dev.br/loteria/${jogo}/${numero}`),
+      () => pull(`https://api.brasilapifacil.com.br/v1/loteria/${jogo}/${numero}`),
       () => pull(`https://raw.githubusercontent.com/maickon/free-apiloterias/refs/heads/master/database/${jogo}/${numero}.json`),
       () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`, CAIXA_HEADERS),
     ],
@@ -190,7 +240,7 @@ function rememberContest(sorteio: Sorteio | null) {
   contestCache.set(`${sorteio.jogo}:${sorteio.numero}`, sorteio);
 }
 
-async function loadContest(jogo: GameId, numero: number, source: "caixa" | "guidi" | "github"): Promise<Sorteio | null> {
+async function loadContest(jogo: GameId, numero: number, source: "caixa" | "guidi" | "github" | "brasil"): Promise<Sorteio | null> {
   const key = `${jogo}:${numero}`;
   const cached = contestCache.get(key);
   if (cached) return cached;
@@ -199,9 +249,11 @@ async function loadContest(jogo: GameId, numero: number, source: "caixa" | "guid
       ? `https://api.guidi.dev.br/loteria/${jogo}/${numero}`
       : source === "github"
         ? `https://raw.githubusercontent.com/maickon/free-apiloterias/master/database/${jogo}/${numero}.json`
-        : `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`;
+        : source === "brasil"
+          ? `https://api.brasilapifacil.com.br/v1/loteria/${jogo}/${numero}`
+          : `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`;
   try {
-    const timeout = source === "caixa" ? 2500 : 4000;
+    const timeout = source === "caixa" ? 2500 : source === "brasil" ? 8000 : 4000;
     const sorteio = normalize(jogo, await pull(url, source === "caixa" ? CAIXA_HEADERS : undefined, timeout));
     if (!sorteio || sorteio.numero !== numero) return null;
     sorteio.jogo = jogo;
@@ -263,7 +315,7 @@ export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]
     return cached.draws.slice(0, goal);
   }
 
-  const history = async (end: number, count: number, source: "caixa" | "guidi" | "github", limit: number) => {
+  const history = async (end: number, count: number, source: "caixa" | "guidi" | "github" | "brasil", limit: number) => {
     const start = Math.max(1, end - count + 1);
     const numeros: number[] = [];
     for (let numero = start; numero < end; numero++) numeros.push(numero);
@@ -280,11 +332,16 @@ export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]
       draws = mergeDraws([...draws, ...(await history(latest.numero, goal, "guidi", 2))]);
     }
   }
+  if (draws.length < minimum) {
+    draws = mergeDraws([...draws, ...(await history(latest.numero, goal, "brasil", 4))]);
+  }
 
   if (draws.length < minimum) {
     const mirror = await githubLatest(jogo);
-    const end = mirror?.numero ?? latest.numero;
-    draws = mergeDraws([mirror, latest, ...draws, ...(await history(end, Math.min(12, end), "github", 6))]);
+    if (mirror && latest.numero - mirror.numero <= 3) {
+      const end = mirror.numero;
+      draws = mergeDraws([mirror, latest, ...draws, ...(await history(end, Math.min(12, end), "github", 6))]);
+    }
   }
 
   const chosen = coherentWindow(draws, minimum);
