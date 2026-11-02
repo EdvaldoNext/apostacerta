@@ -5,12 +5,18 @@ const TTL_MS = 10 * 60 * 1000;
 
 const cache = new Map<GameId, { at: number; sorteio: Sorteio }>();
 
-const CAIXA_HEADERS = {
+const CAIXA_BROWSER = {
   Accept: "application/json, text/plain, */*",
-  "User-Agent": "Mozilla/5.0",
-  Origin: "https://loterias.caixa.gov.br",
-  Referer: "https://loterias.caixa.gov.br/",
+  "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 };
+
+const CAIXA_ATTEMPTS: Array<Record<string, string> | undefined> = [
+  undefined,
+  CAIXA_BROWSER,
+  { ...CAIXA_BROWSER, Referer: "https://loterias.caixa.gov.br/" },
+];
 
 const DRAW_COUNT: Record<GameId, { count: number; second?: number; trevos?: number }> = {
   megasena: { count: 6 },
@@ -176,6 +182,20 @@ async function pull(url: string, headers?: Record<string, string>, timeoutMs = 1
   return res.json();
 }
 
+async function pullCaixa(url: string, timeoutMs = 5000, parent?: AbortSignal): Promise<unknown> {
+  let lastError: unknown;
+  for (const headers of CAIXA_ATTEMPTS) {
+    if (parent?.aborted) break;
+    try {
+      return await pull(url, headers, timeoutMs, parent);
+    } catch (error) {
+      lastError = error;
+      console.error("[loterias] caixa", url, error instanceof Error ? error.message : error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("caixa_indisponivel");
+}
+
 function firstHit<T>(attempts: Array<Promise<T | null>>): Promise<T | null> {
   return new Promise((resolve) => {
     let pending = attempts.length;
@@ -220,13 +240,18 @@ async function fromSources(jogo: GameId, sources: Array<() => Promise<unknown>>,
   throw lastError instanceof Error ? lastError : new Error("resultado_indisponivel");
 }
 
-async function pullCurrent(jogo: GameId, url: string, headers?: Record<string, string>, timeoutMs = 5000): Promise<Sorteio | null> {
+async function pullCurrent(jogo: GameId, url: string, source: "caixa" | "plain", timeoutMs = 5000): Promise<Sorteio | null> {
   try {
-    const sorteio = normalize(jogo, await pull(url, headers, timeoutMs));
-    if (!sorteio || !isCurrentDraw(sorteio)) return null;
+    const body = source === "caixa" ? await pullCaixa(url, timeoutMs) : await pull(url, undefined, timeoutMs);
+    const sorteio = normalize(jogo, body);
+    if (!sorteio || !isCurrentDraw(sorteio)) {
+      console.error("[loterias] ignorado", source, jogo, sorteio?.numero ?? "sem-numero", sorteio?.dataApuracao ?? "");
+      return null;
+    }
     sorteio.jogo = jogo;
     return sorteio;
-  } catch {
+  } catch (error) {
+    console.error("[loterias] fonte", source, url, error instanceof Error ? error.message : error);
     return null;
   }
 }
@@ -236,8 +261,8 @@ export async function latestDraw(jogo: GameId, fresh = false): Promise<Sorteio> 
   if (!fresh && cached && Date.now() - cached.at < TTL_MS) return cached.sorteio;
 
   const found = await firstHit([
-    pullCurrent(jogo, `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, CAIXA_HEADERS, 5000),
-    pullCurrent(jogo, `https://api.guidi.dev.br/loteria/${jogo}/ultimo`, undefined, 5000),
+    pullCurrent(jogo, `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, "caixa", 5000),
+    pullCurrent(jogo, `https://api.guidi.dev.br/loteria/${jogo}/ultimo`, "plain", 5000),
   ]);
   if (found) {
     cache.set(jogo, { at: Date.now(), sorteio: found });
@@ -258,7 +283,7 @@ export async function contestDraw(jogo: GameId, numero: number): Promise<Sorteio
     jogo,
     [
       () => pull(`https://api.guidi.dev.br/loteria/${jogo}/${numero}`, undefined, 5000),
-      () => pull(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`, CAIXA_HEADERS, 5000),
+      () => pullCaixa(`https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`, 5000),
       () => pull(`https://raw.githubusercontent.com/maickon/free-apiloterias/master/database/${jogo}/${numero}.json`, undefined, 4000),
     ],
     numero,
@@ -292,7 +317,7 @@ async function loadContest(
         : `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`;
   try {
     const timeout = source === "github" ? 4000 : 5000;
-    const sorteio = normalize(jogo, await pull(url, source === "caixa" ? CAIXA_HEADERS : undefined, timeout, parent));
+    const sorteio = normalize(jogo, source === "caixa" ? await pullCaixa(url, timeout, parent) : await pull(url, undefined, timeout, parent));
     if (!sorteio || sorteio.numero !== numero) return null;
     sorteio.jogo = jogo;
     contestCache.set(key, sorteio);
