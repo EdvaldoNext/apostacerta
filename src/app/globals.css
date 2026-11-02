@@ -6,6 +6,7 @@
   --muted: #a39b8d;
   --gold: #e7c78a;
   --gold-deep: #b8883d;
+  --repetida: #3ddec4;
   --danger: #ff8d7a;
   --ok: #8dcea8;
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
@@ -253,13 +254,13 @@ input:focus, select:focus { outline: 2px solid rgba(231, 199, 138, 0.45); border
 .swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); display: inline-block; }
 .swatch.freq { border-color: var(--gold); box-shadow: inset 0 0 0 2px var(--gold); }
 .swatch.atraso { border-color: #8eb4ff; box-shadow: inset 0 0 0 2px #8eb4ff; }
-.swatch.repetida { border-color: #e7c78a; box-shadow: inset 0 -3px 0 #e7c78a; }
+.swatch.repetida { border-color: var(--repetida); box-shadow: inset 0 0 0 2px var(--repetida); }
 .swatch.fav { background: var(--accent); border-color: transparent; }
 .ball.is-freq:not([aria-pressed="true"]) { border-color: var(--gold); box-shadow: inset 0 0 0 2px var(--gold); }
 .ball.is-atraso:not([aria-pressed="true"]) { border-color: #8eb4ff; box-shadow: inset 0 0 0 2px #8eb4ff; }
-.ball.is-repetida:not([aria-pressed="true"]) { border-color: #e7c78a; box-shadow: inset 0 -3px 0 #e7c78a; }
-.ball.is-freq.is-repetida:not([aria-pressed="true"]) { border-color: var(--gold); box-shadow: inset 0 0 0 2px var(--gold), inset 0 -3px 0 #f6f1e7; }
-.ball.is-atraso.is-repetida:not([aria-pressed="true"]) { border-color: #8eb4ff; box-shadow: inset 0 0 0 2px #8eb4ff, inset 0 -3px 0 #e7c78a; }
+.ball.is-repetida:not([aria-pressed="true"]) { border-color: var(--repetida); box-shadow: inset 0 0 0 2px var(--repetida); }
+.ball.is-freq.is-repetida:not([aria-pressed="true"]) { border-color: var(--gold); box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 0 4px #0d1016, inset 0 0 0 6px var(--repetida); }
+.ball.is-atraso.is-repetida:not([aria-pressed="true"]) { border-color: #8eb4ff; box-shadow: inset 0 0 0 2px #8eb4ff, inset 0 0 0 4px #0d1016, inset 0 0 0 6px var(--repetida); }
 .drawer-back {
   position: fixed;
   inset: 0;
