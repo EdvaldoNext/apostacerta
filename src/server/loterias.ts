@@ -303,28 +303,34 @@ async function loadContest(
       : source === "github"
         ? `https://raw.githubusercontent.com/maickon/free-apiloterias/master/database/${jogo}/${numero}.json`
         : `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`;
+  const timeout = source === "github" ? 4000 : 5000;
   try {
-    const timeout = source === "github" ? 4000 : 5000;
     const sorteio = normalize(jogo, source === "caixa" ? await pullCaixa(url, timeout, parent) : await pull(url, undefined, timeout, parent));
-    if (!sorteio || sorteio.numero !== numero) {
-      noteHistory(`${source}:${numero}:${sorteio ? "numero" : "payload"}`);
-      return null;
-    }
+    if (!sorteio || sorteio.numero !== numero) return null;
     sorteio.jogo = jogo;
     contestCache.set(key, sorteio);
     return sorteio;
   } catch (error) {
-    noteHistory(`${source}:${numero}:${error instanceof Error ? error.message : "falha"}:abort=${parent?.aborted ? 1 : 0}`);
-    return null;
+    const retry = source === "guidi" && error instanceof Error && error.message === "429" && !parent?.aborted;
+    if (!retry) return null;
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (parent?.aborted) return null;
+    try {
+      const sorteio = normalize(jogo, await pull(url, undefined, timeout, parent));
+      if (!sorteio || sorteio.numero !== numero) return null;
+      sorteio.jogo = jogo;
+      contestCache.set(key, sorteio);
+      return sorteio;
+    } catch {
+      return null;
+    }
   }
 }
 
 async function loadContestLive(jogo: GameId, numero: number, parent?: AbortSignal): Promise<Sorteio | null> {
   const cached = contestCache.get(`${jogo}:${numero}`);
   if (cached) return cached;
-  const guidi = await loadContest(jogo, numero, "guidi", parent);
-  if (guidi || parent?.aborted) return guidi;
-  return loadContest(jogo, numero, "caixa", parent);
+  return loadContest(jogo, numero, "guidi", parent);
 }
 
 function mergeDraws(draws: Array<Sorteio | null>): Sorteio[] {
@@ -369,43 +375,25 @@ async function githubLatest(jogo: GameId): Promise<Sorteio | null> {
 }
 
 const HISTORY_BUDGET_MS = 20000;
-const HISTORY_CONCURRENCY = 1;
-const historyNotes: string[] = [];
-let historySummary = "";
-
-function noteHistory(text: string) {
-  if (historyNotes.length < 6) historyNotes.push(text);
-}
-
-export function historyDebug(): string {
-  return [historySummary, ...historyNotes].filter(Boolean).join(" | ");
-}
 
 async function collectHistory(jogo: GameId, end: number, count: number, source: "live" | "github"): Promise<Sorteio[]> {
   const start = Math.max(1, end - count + 1);
   const numeros: number[] = [];
-  for (let numero = start; numero < end; numero++) numeros.push(numero);
+  for (let numero = end - 1; numero >= start; numero--) numeros.push(numero);
   if (!numeros.length) return [];
 
   const parent = AbortSignal.timeout(HISTORY_BUDGET_MS);
   const found: Sorteio[] = [];
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(HISTORY_CONCURRENCY, numeros.length) }, async () => {
-    while (!parent.aborted && cursor < numeros.length) {
-      const numero = numeros[cursor++];
-      const draw = source === "github" ? await loadContest(jogo, numero, "github", parent) : await loadContestLive(jogo, numero, parent);
-      if (draw) found.push(draw);
-      else await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-  });
-  await Promise.all(workers);
-  historySummary = `n=${numeros.length} achados=${found.length} abort=${parent.aborted ? 1 : 0}`;
+  for (const numero of numeros) {
+    if (parent.aborted) break;
+    const draw = source === "github" ? await loadContest(jogo, numero, "github", parent) : await loadContestLive(jogo, numero, parent);
+    if (draw) found.push(draw);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
   return found;
 }
 
 export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]> {
-  historyNotes.length = 0;
-  historySummary = "";
   const latest = await latestDraw(jogo);
   const want = Math.max(1, Math.min(take, latest.numero));
   const goal = jogo === "supersete" ? Math.min(want, 6) : want;
@@ -425,7 +413,6 @@ export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]
   }
 
   const chosen = coherentWindow(draws, minimum);
-  noteHistory(`total=${draws.length}`);
   if (!chosen.length) {
     console.error("[loterias] historico", jogo, "sem concursos");
     throw new Error("estatisticas_insuficientes");
