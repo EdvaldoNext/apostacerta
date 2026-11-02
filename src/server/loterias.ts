@@ -196,30 +196,6 @@ async function pullCaixa(url: string, timeoutMs = 5000, parent?: AbortSignal): P
   throw lastError instanceof Error ? lastError : new Error("caixa_indisponivel");
 }
 
-function firstHit<T>(attempts: Array<Promise<T | null>>): Promise<T | null> {
-  return new Promise((resolve) => {
-    let pending = attempts.length;
-    let done = false;
-    const finish = (value: T | null) => {
-      if (done) return;
-      done = true;
-      resolve(value);
-    };
-    if (!pending) finish(null);
-    for (const attempt of attempts) {
-      attempt
-        .then((value) => {
-          if (value) finish(value);
-        })
-        .catch(() => {})
-        .finally(() => {
-          pending -= 1;
-          if (pending === 0) finish(null);
-        });
-    }
-  });
-}
-
 const contestCache = new Map<string, Sorteio>();
 
 async function fromSources(jogo: GameId, sources: Array<() => Promise<unknown>>, expected?: number): Promise<Sorteio> {
@@ -342,7 +318,9 @@ async function loadContest(
 async function loadContestLive(jogo: GameId, numero: number, parent?: AbortSignal): Promise<Sorteio | null> {
   const cached = contestCache.get(`${jogo}:${numero}`);
   if (cached) return cached;
-  return firstHit([loadContest(jogo, numero, "caixa", parent), loadContest(jogo, numero, "guidi", parent)]);
+  const guidi = await loadContest(jogo, numero, "guidi", parent);
+  if (guidi || parent?.aborted) return guidi;
+  return loadContest(jogo, numero, "caixa", parent);
 }
 
 function mergeDraws(draws: Array<Sorteio | null>): Sorteio[] {
@@ -386,8 +364,8 @@ async function githubLatest(jogo: GameId): Promise<Sorteio | null> {
   }
 }
 
-const HISTORY_BUDGET_MS = 8000;
-const HISTORY_CONCURRENCY = 4;
+const HISTORY_BUDGET_MS = 20000;
+const HISTORY_CONCURRENCY = 2;
 
 async function collectHistory(jogo: GameId, end: number, count: number, source: "live" | "github"): Promise<Sorteio[]> {
   const start = Math.max(1, end - count + 1);
