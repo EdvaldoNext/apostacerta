@@ -376,10 +376,18 @@ async function githubLatest(jogo: GameId): Promise<Sorteio | null> {
 
 const HISTORY_BUDGET_MS = 20000;
 
-async function collectHistory(jogo: GameId, end: number, count: number, source: "live" | "github"): Promise<Sorteio[]> {
+async function collectHistory(
+  jogo: GameId,
+  end: number,
+  count: number,
+  source: "live" | "github",
+  skip: Set<number> = new Set(),
+): Promise<Sorteio[]> {
   const start = Math.max(1, end - count + 1);
   const numeros: number[] = [];
-  for (let numero = end - 1; numero >= start; numero--) numeros.push(numero);
+  for (let numero = end - 1; numero >= start; numero--) {
+    if (!skip.has(numero)) numeros.push(numero);
+  }
   if (!numeros.length) return [];
 
   const parent = AbortSignal.timeout(HISTORY_BUDGET_MS);
@@ -399,11 +407,12 @@ export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]
   const goal = jogo === "supersete" ? Math.min(want, 6) : want;
   const minimum = Math.min(5, goal);
   const cached = recentCache.get(jogo);
-  if (cached && Date.now() - cached.at < TTL_MS && cached.draws.length >= minimum && cached.numero >= latest.numero - 2) {
-    return cached.draws.slice(0, goal);
-  }
+  const cachedDraws =
+    cached && Date.now() - cached.at < TTL_MS && cached.numero >= latest.numero - 2 ? cached.draws : [];
+  if (cachedDraws.length >= goal) return cachedDraws.slice(0, goal);
 
-  let draws = mergeDraws([latest, ...(await collectHistory(jogo, latest.numero, goal, "live"))]);
+  const skip = new Set(cachedDraws.map((draw) => draw.numero));
+  let draws = mergeDraws([latest, ...cachedDraws, ...(await collectHistory(jogo, latest.numero, goal, "live", skip))]);
   if (draws.length < minimum) {
     const mirror = await githubLatest(jogo);
     if (mirror && latest.numero - mirror.numero <= 3) {
