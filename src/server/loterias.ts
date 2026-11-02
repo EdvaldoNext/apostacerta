@@ -2,6 +2,9 @@ import { GAME_MAP, type GameId } from "@/lib/games";
 import type { Sorteio } from "@/lib/types";
 
 const TTL_MS = 10 * 60 * 1000;
+const LATEST_TIMEOUT_MS = 2500;
+const LATEST_GRACE_MS = 300;
+const HISTORY_CONCURRENCY = 6;
 
 const cache = new Map<GameId, { at: number; sorteio: Sorteio }>();
 
@@ -182,9 +185,14 @@ async function pull(url: string, headers?: Record<string, string>, timeoutMs = 1
   return res.json();
 }
 
-async function pullCaixa(url: string, timeoutMs = 5000, parent?: AbortSignal): Promise<unknown> {
+async function pullCaixa(
+  url: string,
+  timeoutMs = 5000,
+  parent?: AbortSignal,
+  attempts: Array<Record<string, string> | undefined> = CAIXA_ATTEMPTS,
+): Promise<unknown> {
   let lastError: unknown;
-  for (const headers of CAIXA_ATTEMPTS) {
+  for (const headers of attempts) {
     if (parent?.aborted) break;
     try {
       return await pull(url, headers, timeoutMs, parent);
@@ -221,9 +229,13 @@ async function pullCurrent(
   url: string,
   source: "caixa" | "plain",
   timeoutMs = 5000,
+  caixaAttempts?: Array<Record<string, string> | undefined>,
 ): Promise<{ sorteio: Sorteio | null; note: string }> {
   try {
-    const body = source === "caixa" ? await pullCaixa(url, timeoutMs) : await pull(url, undefined, timeoutMs);
+    const body =
+      source === "caixa"
+        ? await pullCaixa(url, timeoutMs, undefined, caixaAttempts)
+        : await pull(url, undefined, timeoutMs);
     const sorteio = normalize(jogo, body);
     if (!sorteio || !isCurrentDraw(sorteio)) {
       const note = `${source}:${sorteio ? `antigo ${sorteio.numero} ${sorteio.dataApuracao}` : "payload"}`;
@@ -239,25 +251,72 @@ async function pullCurrent(
   }
 }
 
+function raceLatest(
+  tasks: Array<Promise<{ sorteio: Sorteio | null; note: string }>>,
+): Promise<{ sorteio: Sorteio | null; notes: string[] }> {
+  const notes: string[] = [];
+  const draws: Sorteio[] = [];
+  let remaining = tasks.length;
+  let settled = false;
+  let grace: ReturnType<typeof setTimeout> | undefined;
+
+  return new Promise((resolve) => {
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (grace) clearTimeout(grace);
+      draws.sort((a, b) => b.numero - a.numero);
+      resolve({ sorteio: draws[0] ?? null, notes });
+    };
+
+    if (!tasks.length) {
+      finish();
+      return;
+    }
+
+    for (const task of tasks) {
+      task
+        .then((item) => {
+          if (item.note) notes.push(item.note);
+          if (item.sorteio) draws.push(item.sorteio);
+        })
+        .catch((error) => {
+          notes.push(error instanceof Error ? error.message : "falha");
+        })
+        .finally(() => {
+          remaining -= 1;
+          if (settled) return;
+          if (draws.length && remaining > 0) {
+            if (!grace) grace = setTimeout(finish, LATEST_GRACE_MS);
+            return;
+          }
+          if (remaining === 0 || draws.length) finish();
+        });
+    }
+  });
+}
+
 export async function latestDraw(jogo: GameId, fresh = false): Promise<Sorteio> {
   const cached = cache.get(jogo);
   if (!fresh && cached && Date.now() - cached.at < TTL_MS) return cached.sorteio;
 
-  const attempts = await Promise.all([
-    pullCurrent(jogo, `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, "caixa", 5000),
-    pullCurrent(jogo, `https://api.guidi.dev.br/loteria/${jogo}/ultimo`, "plain", 5000),
+  const { sorteio: found, notes } = await raceLatest([
+    pullCurrent(
+      jogo,
+      `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`,
+      "caixa",
+      LATEST_TIMEOUT_MS,
+      [CAIXA_BROWSER],
+    ),
+    pullCurrent(jogo, `https://api.guidi.dev.br/loteria/${jogo}/ultimo`, "plain", LATEST_TIMEOUT_MS),
   ]);
-  const found = attempts.find((item) => item.sorteio)?.sorteio ?? null;
   if (found) {
     cache.set(jogo, { at: Date.now(), sorteio: found });
     rememberContest(found);
     return found;
   }
   if (cached) return cached.sorteio;
-  const note = attempts
-    .map((item) => item.note)
-    .filter(Boolean)
-    .join(" | ");
+  const note = notes.filter(Boolean).join(" | ");
   console.error("[loterias] latest", jogo, note);
   throw new Error(note || "resultado_indisponivel");
 }
@@ -303,9 +362,13 @@ async function loadContest(
       : source === "github"
         ? `https://raw.githubusercontent.com/maickon/free-apiloterias/master/database/${jogo}/${numero}.json`
         : `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}/${numero}`;
-  const timeout = source === "github" ? 4000 : 5000;
+  const timeout = source === "github" ? 4000 : source === "caixa" ? LATEST_TIMEOUT_MS : 5000;
   try {
-    const sorteio = normalize(jogo, source === "caixa" ? await pullCaixa(url, timeout, parent) : await pull(url, undefined, timeout, parent));
+    const body =
+      source === "caixa"
+        ? await pullCaixa(url, timeout, parent, [CAIXA_BROWSER])
+        : await pull(url, undefined, timeout, parent);
+    const sorteio = normalize(jogo, body);
     if (!sorteio || sorteio.numero !== numero) return null;
     sorteio.jogo = jogo;
     contestCache.set(key, sorteio);
@@ -376,11 +439,30 @@ async function githubLatest(jogo: GameId): Promise<Sorteio | null> {
 
 const HISTORY_BUDGET_MS = 20000;
 
+async function collectParallel(
+  numeros: number[],
+  parent: AbortSignal,
+  load: (numero: number) => Promise<Sorteio | null>,
+): Promise<Sorteio[]> {
+  const found: Sorteio[] = [];
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(HISTORY_CONCURRENCY, numeros.length) }, async () => {
+    while (!parent.aborted) {
+      const index = cursor++;
+      if (index >= numeros.length) return;
+      const draw = await load(numeros[index]);
+      if (draw) found.push(draw);
+    }
+  });
+  await Promise.all(workers);
+  return found;
+}
+
 async function collectHistory(
   jogo: GameId,
   end: number,
   count: number,
-  source: "live" | "github",
+  source: "live" | "github" | "caixa",
   skip: Set<number> = new Set(),
 ): Promise<Sorteio[]> {
   const start = Math.max(1, end - count + 1);
@@ -391,10 +473,14 @@ async function collectHistory(
   if (!numeros.length) return [];
 
   const parent = AbortSignal.timeout(HISTORY_BUDGET_MS);
+  if (source === "github" || source === "caixa") {
+    return collectParallel(numeros, parent, (numero) => loadContest(jogo, numero, source, parent));
+  }
+
   const found: Sorteio[] = [];
   for (const numero of numeros) {
     if (parent.aborted) break;
-    const draw = source === "github" ? await loadContest(jogo, numero, "github", parent) : await loadContestLive(jogo, numero, parent);
+    const draw = await loadContestLive(jogo, numero, parent);
     if (draw) found.push(draw);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -412,12 +498,24 @@ export async function recentDraws(jogo: GameId, take: number): Promise<Sorteio[]
   if (cachedDraws.length >= goal) return cachedDraws.slice(0, goal);
 
   const skip = new Set(cachedDraws.map((draw) => draw.numero));
-  let draws = mergeDraws([latest, ...cachedDraws, ...(await collectHistory(jogo, latest.numero, goal, "live", skip))]);
+  let draws = mergeDraws([
+    latest,
+    ...cachedDraws,
+    ...(await collectHistory(jogo, latest.numero, goal, "caixa", skip)),
+  ]);
+  if (coherentWindow(draws, minimum).length < goal) {
+    const have = new Set(draws.map((draw) => draw.numero));
+    draws = mergeDraws([...draws, ...(await collectHistory(jogo, latest.numero, goal, "live", have))]);
+  }
   if (draws.length < minimum) {
     const mirror = await githubLatest(jogo);
     if (mirror && latest.numero - mirror.numero <= 3) {
-      const end = mirror.numero;
-      draws = mergeDraws([mirror, latest, ...draws, ...(await collectHistory(jogo, end, Math.min(12, end), "github"))]);
+      const have = new Set(draws.map((draw) => draw.numero));
+      draws = mergeDraws([
+        mirror,
+        ...draws,
+        ...(await collectHistory(jogo, mirror.numero, Math.min(12, mirror.numero), "github", have)),
+      ]);
     }
   }
 

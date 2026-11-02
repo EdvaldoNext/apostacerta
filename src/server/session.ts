@@ -84,8 +84,8 @@ export interface Session {
   viaBearer: boolean;
 }
 
-async function readToken(req: Request, allowBearer: boolean): Promise<{ token: string; viaBearer: boolean } | null> {
-  if (allowBearer) {
+async function readToken(req: Request | undefined, allowBearer: boolean): Promise<{ token: string; viaBearer: boolean } | null> {
+  if (allowBearer && req) {
     const header = req.headers.get("authorization") || "";
     const match = header.match(/^Bearer\s+(.+)$/i);
     if (match) return { token: match[1].trim(), viaBearer: true };
@@ -95,7 +95,7 @@ async function readToken(req: Request, allowBearer: boolean): Promise<{ token: s
   return value ? { token: value, viaBearer: false } : null;
 }
 
-export async function getSession(req: Request, opts: { allowBearer?: boolean } = {}): Promise<Session | null> {
+export async function getSession(req?: Request, opts: { allowBearer?: boolean } = {}): Promise<Session | null> {
   const found = await readToken(req, Boolean(opts.allowBearer));
   if (!found) return null;
 

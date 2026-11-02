@@ -27,8 +27,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-export function AppShell() {
-  const [user, setUser] = useState<AuthUser | null | undefined>(undefined);
+export function AppShell({ initialUser }: { initialUser?: AuthUser | null }) {
+  const [user, setUser] = useState<AuthUser | null | undefined>(initialUser);
   const [billing, setBilling] = useState<BillingMe | null>(null);
   const [billingError, setBillingError] = useState(false);
   const billingRef = useRef<BillingMe | null>(null);
@@ -70,7 +70,7 @@ export function AppShell() {
     }
     api<{ user: AuthUser | null }>("/api/auth/me")
       .then((res) => setUser(res.user))
-      .catch(() => setUser(null));
+      .catch(() => setUser((current) => (current === undefined ? null : current)));
   }, []);
 
   useEffect(() => {
