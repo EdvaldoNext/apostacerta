@@ -240,19 +240,26 @@ async function fromSources(jogo: GameId, sources: Array<() => Promise<unknown>>,
   throw lastError instanceof Error ? lastError : new Error("resultado_indisponivel");
 }
 
-async function pullCurrent(jogo: GameId, url: string, source: "caixa" | "plain", timeoutMs = 5000): Promise<Sorteio | null> {
+async function pullCurrent(
+  jogo: GameId,
+  url: string,
+  source: "caixa" | "plain",
+  timeoutMs = 5000,
+): Promise<{ sorteio: Sorteio | null; note: string }> {
   try {
     const body = source === "caixa" ? await pullCaixa(url, timeoutMs) : await pull(url, undefined, timeoutMs);
     const sorteio = normalize(jogo, body);
     if (!sorteio || !isCurrentDraw(sorteio)) {
-      console.error("[loterias] ignorado", source, jogo, sorteio?.numero ?? "sem-numero", sorteio?.dataApuracao ?? "");
-      return null;
+      const note = `${source}:${sorteio ? `antigo ${sorteio.numero} ${sorteio.dataApuracao}` : "payload"}`;
+      console.error("[loterias] ignorado", jogo, note);
+      return { sorteio: null, note };
     }
     sorteio.jogo = jogo;
-    return sorteio;
+    return { sorteio, note: "" };
   } catch (error) {
-    console.error("[loterias] fonte", source, url, error instanceof Error ? error.message : error);
-    return null;
+    const note = `${source}:${error instanceof Error ? error.message : "falha"}`;
+    console.error("[loterias] fonte", note, url);
+    return { sorteio: null, note };
   }
 }
 
@@ -260,18 +267,23 @@ export async function latestDraw(jogo: GameId, fresh = false): Promise<Sorteio> 
   const cached = cache.get(jogo);
   if (!fresh && cached && Date.now() - cached.at < TTL_MS) return cached.sorteio;
 
-  const found = await firstHit([
+  const attempts = await Promise.all([
     pullCurrent(jogo, `https://servicebus2.caixa.gov.br/portaldeloterias/api/${jogo}`, "caixa", 5000),
     pullCurrent(jogo, `https://api.guidi.dev.br/loteria/${jogo}/ultimo`, "plain", 5000),
   ]);
+  const found = attempts.find((item) => item.sorteio)?.sorteio ?? null;
   if (found) {
     cache.set(jogo, { at: Date.now(), sorteio: found });
     rememberContest(found);
     return found;
   }
   if (cached) return cached.sorteio;
-  console.error("[loterias] latest", jogo, "sem concurso atual");
-  throw new Error("resultado_indisponivel");
+  const note = attempts
+    .map((item) => item.note)
+    .filter(Boolean)
+    .join(" | ");
+  console.error("[loterias] latest", jogo, note);
+  throw new Error(note || "resultado_indisponivel");
 }
 
 export async function contestDraw(jogo: GameId, numero: number): Promise<Sorteio> {

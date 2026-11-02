@@ -14,7 +14,8 @@ export async function GET(req: Request) {
     if (!perfil) return fail(502, "estatisticas_indisponiveis", "Não foi possível calcular as estatísticas agora.");
     return json(resumoEstatistico(perfil));
   } catch (error) {
-    console.error("[estatisticas]", jogo, error);
-    return fail(502, "estatisticas_indisponiveis", "Não foi possível calcular as estatísticas agora.");
+    const detail = error instanceof Error ? error.message : "estatisticas_indisponiveis";
+    console.error("[estatisticas]", jogo, detail);
+    return json({ error: "estatisticas_indisponiveis", message: "Não foi possível calcular as estatísticas agora.", detail }, 502);
   }
 }

@@ -29,7 +29,8 @@ export async function GET(req: Request) {
     const sorteio = await latestDraw(jogo, url.searchParams.get("fresh") === "1");
     return json({ sorteio });
   } catch (error) {
-    console.error("[resultados]", jogo, error);
-    return fail(502, "resultado_indisponivel", "Não foi possível consultar o resultado agora.");
+    const detail = error instanceof Error ? error.message : "resultado_indisponivel";
+    console.error("[resultados]", jogo, detail);
+    return json({ error: "resultado_indisponivel", message: "Não foi possível consultar o resultado agora.", detail }, 502);
   }
 }
