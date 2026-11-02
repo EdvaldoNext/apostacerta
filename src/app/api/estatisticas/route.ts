@@ -13,7 +13,8 @@ export async function GET(req: Request) {
     const perfil = perfilFromDraws(jogo, await recentDraws(jogo, JANELA_ESTATISTICA));
     if (!perfil) return fail(502, "estatisticas_indisponiveis", "Não foi possível calcular as estatísticas agora.");
     return json(resumoEstatistico(perfil));
-  } catch {
+  } catch (error) {
+    console.error("[estatisticas]", jogo, error);
     return fail(502, "estatisticas_indisponiveis", "Não foi possível calcular as estatísticas agora.");
   }
 }

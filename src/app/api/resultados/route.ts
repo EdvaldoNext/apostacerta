@@ -20,6 +20,7 @@ export async function GET(req: Request) {
       if (error instanceof Error && error.message === "concurso_nao_encontrado") {
         return fail(404, "concurso_nao_encontrado", "Esse concurso não foi encontrado.");
       }
+      console.error("[resultados]", jogo, numero, error);
       return fail(502, "resultado_indisponivel", "Não foi possível consultar o resultado agora.");
     }
   }
@@ -27,7 +28,8 @@ export async function GET(req: Request) {
   try {
     const sorteio = await latestDraw(jogo, url.searchParams.get("fresh") === "1");
     return json({ sorteio });
-  } catch {
+  } catch (error) {
+    console.error("[resultados]", jogo, error);
     return fail(502, "resultado_indisponivel", "Não foi possível consultar o resultado agora.");
   }
 }

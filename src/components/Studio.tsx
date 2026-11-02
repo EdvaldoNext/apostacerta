@@ -9,6 +9,17 @@ import { formatBRL, formatTimestampBR } from "@/lib/format";
 import { GAMES, GAME_MAP, MESES, TIMES, isGameId, padNumber, quote, type GameId } from "@/lib/games";
 import type { BetView, SavedBet, Sorteio } from "@/lib/types";
 
+function transientFailure(error: unknown): boolean {
+  return error instanceof ApiError ? error.status === 0 || error.status >= 500 : true;
+}
+
+function retryOnce<T>(run: () => Promise<T>): Promise<T> {
+  return run().catch((error: unknown) => {
+    if (!transientFailure(error)) throw error;
+    return new Promise((resolve) => window.setTimeout(resolve, 1000)).then(run);
+  });
+}
+
 function resolverSituacao(
   item: { jogo: string; created_at: string; concurso: number | null },
   sorteios: Partial<Record<GameId, Sorteio>>,
@@ -101,7 +112,7 @@ export function Studio({
     pedidos.current.add(jogo);
     setResultadoEstado((prev) => ({ ...prev, [jogo]: "loading" }));
     const path = fresh ? `/api/resultados?jogo=${jogo}&fresh=1` : `/api/resultados?jogo=${jogo}`;
-    api<{ sorteio: Sorteio }>(path)
+    retryOnce(() => api<{ sorteio: Sorteio }>(path))
       .then((res) => {
         if (!vivo.current) return;
         setSorteios((prev) => ({ ...prev, [jogo]: res.sorteio }));
@@ -140,7 +151,7 @@ export function Studio({
     if (!fresh && pedidosEstat.current.has(jogo)) return;
     pedidosEstat.current.add(jogo);
     setResumoEstado((prev) => ({ ...prev, [jogo]: "loading" }));
-    api<ResumoEstatistica>(`/api/estatisticas?jogo=${jogo}`)
+    retryOnce(() => api<ResumoEstatistica>(`/api/estatisticas?jogo=${jogo}`))
       .then((res) => {
         if (!vivo.current) return;
         setResumo((prev) => ({ ...prev, [jogo]: res }));
